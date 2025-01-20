@@ -9,56 +9,42 @@ import hashlib
 
 class TrendsService:
     def __init__(self):
-        self.pytrends = TrendReq(hl='fr-FR', 
-                                tz=360,
-                                timeout=(10,25),  # Augmente le timeout
-                                retries=2,
-                                backoff_factor=0.1)
+        self.pytrends = TrendReq(hl='fr-FR', tz=360)
         self.logger = logging.getLogger(__name__)
-        
-    @st.cache_data(ttl=3600)  # Cache les résultats pendant 1 heure
+
     def get_interest_over_time(self, keywords, geo, timeframe):
         """
-        Récupère les données de tendances avec gestion du cache et des erreurs
+        Fetch interest over time with rate-limiting and retry logic.
         """
-        # Création d'une clé unique pour le cache
-        cache_key = self._create_cache_key(keywords, geo, timeframe)
-        
         try:
-            # Attente entre les requêtes pour éviter le rate limiting
-            time.sleep(1)  
-            
+            # Build the payload
             self.pytrends.build_payload(
-                kw_list=keywords[:5],
+                kw_list=keywords[:5],  # Google Trends allows up to 5 keywords
                 cat=0,
                 timeframe=timeframe,
                 geo=geo
             )
-            
-            # Nouvelle tentative avec backoff exponentiel
-            for attempt in range(3):
+
+            # Retry logic with exponential backoff
+            for attempt in range(3):  # Retry up to 3 times
                 try:
-                    df = self.pytrends.interest_over_time()
-                    if not df.empty:
-                        return df
+                    time.sleep(2 ** attempt)  # Exponential backoff: 2, 4, 8 seconds
+                    data = self.pytrends.interest_over_time()
+                    if not data.empty:
+                        return data
                 except Exception as e:
-                    if attempt == 2:  # Dernière tentative
+                    if attempt == 2:  # Last attempt
                         raise
-                    wait_time = (2 ** attempt) * 2  # 2, 4, 8 secondes
-                    time.sleep(wait_time)
-            
-            if df.empty:
-                raise ValueError("Aucune donnée trouvée pour ces critères")
-                
-            return df
-            
+                    self.logger.warning(f"Retrying due to error: {e}")
+
+            raise Exception("Failed to fetch data after multiple attempts.")
+
         except Exception as e:
-            error_msg = str(e)
-            if "429" in error_msg:
+            if "429" in str(e):
                 raise Exception(
-                    "Limite de requêtes atteinte. Veuillez attendre quelques minutes avant de réessayer."
+                    "Rate limit exceeded. Please wait a few minutes before retrying."
                 )
-            self.logger.error(f"Erreur lors de la récupération des données: {error_msg}")
+            self.logger.error(f"Error fetching data: {e}")
             raise
 
     def _create_cache_key(self, keywords, geo, timeframe):
