@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.express as px
 from datetime import datetime, timedelta
 import pandas as pd
-
+import time
 from trends_service import TrendsService
 from utils import format_timeframe, get_available_countries, prepare_data_for_plot
 
@@ -27,7 +27,7 @@ def main():
 
         # Input pour les mots-clés
         keywords_input = st.text_area(
-            "Mots-clés (un par ligne)",
+            "Mots-clés (un par ligne, max 5)",
             height=100,
             help="Entrez jusqu'à 5 mots-clés, un par ligne"
         )
@@ -40,17 +40,22 @@ def main():
             format_func=lambda x: countries[x]
         )
 
-        # Sélection de la période
+        # Sélection de la période avec limitations
         col1, col2 = st.columns(2)
         with col1:
+            min_date = datetime.now() - timedelta(days=365)  # Limite à 1 an
             start_date = st.date_input(
                 "Date de début",
-                value=datetime.now() - timedelta(days=90)
+                value=datetime.now() - timedelta(days=90),
+                min_value=min_date,
+                max_value=datetime.now()
             )
         with col2:
             end_date = st.date_input(
                 "Date de fin",
-                value=datetime.now()
+                value=datetime.now(),
+                min_value=start_date,
+                max_value=datetime.now()
             )
 
         # Bouton de recherche
@@ -73,34 +78,41 @@ def main():
                 trends_service = get_trends_service()
                 timeframe = format_timeframe(start_date, end_date)
 
-                # Récupération des données
+                # Récupération des données avec gestion du cache
                 df = trends_service.get_interest_over_time(keywords, country, timeframe)
-                df = prepare_data_for_plot(df)
 
-                # Affichage du graphique
-                st.subheader("Évolution des tendances")
-                fig = px.line(
-                    df,
-                    x='date',
-                    y=keywords,
-                    title="Évolution de l'intérêt au fil du temps"
-                )
-                st.plotly_chart(fig, use_container_width=True)
+                if df is not None and not df.empty:
+                    df = prepare_data_for_plot(df)
 
-                # Affichage des données brutes
-                with st.expander("Voir les données brutes"):
-                    st.dataframe(df)
+                    # Affichage du graphique
+                    st.subheader("Évolution des tendances")
+                    fig = px.line(
+                        df,
+                        x='date',
+                        y=keywords,
+                        title="Évolution de l'intérêt au fil du temps"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
-                # Téléchargement des données
-                st.download_button(
-                    label="Télécharger les données (CSV)",
-                    data=df.to_csv(index=False),
-                    file_name="google_trends_data.csv",
-                    mime="text/csv"
-                )
+                    # Affichage des données brutes
+                    with st.expander("Voir les données brutes"):
+                        st.dataframe(df)
+
+                    # Téléchargement des données
+                    st.download_button(
+                        label="Télécharger les données (CSV)",
+                        data=df.to_csv(index=False),
+                        file_name="google_trends_data.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.warning("Aucune donnée disponible pour ces critères")
 
         except Exception as e:
             st.error(f"Une erreur est survenue: {str(e)}")
+            if "429" in str(e):
+                st.info("Conseil: Attendez quelques minutes avant de réessayer. "
+                       "Google Trends limite le nombre de requêtes par période.")
 
 if __name__ == "__main__":
     main()
